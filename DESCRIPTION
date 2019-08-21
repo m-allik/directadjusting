@@ -6,7 +6,7 @@ Author: Joonas Miettinen <joonas.miettinen@cancer.fi>
 Maintainer: Joonas Miettinen <joonas.miettinen@cancer.fi>
 Description: More about what it does (maybe more than one line)
     Use four spaces when indenting paragraphs within the Description.
-License: GPL-3
+License: MIT + file LICENSE
 Imports: data.table
 Encoding: UTF-8
 LazyData: true
