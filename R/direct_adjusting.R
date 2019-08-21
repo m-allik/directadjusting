@@ -154,3 +154,20 @@ direct_adjusted_estimates <- function(
 
 
 
+
+confidence_interval <- function(
+  est,
+  var,
+  conf_lvl,
+  conf_method
+) {
+  stop("TODO")
+}
+
+
+
+
+
+
+
+
