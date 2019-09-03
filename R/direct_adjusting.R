@@ -45,6 +45,28 @@
 #' and by which the statistics should be adjusted (e.g. `"agegroup"`)
 #' @template weights_arg
 #'
+#' @section Weights:
+#'
+#' The weights are scaled internally to sum to one, but they need to be positive
+#' numbers (or zero). The scalingis performed separately by each unique
+#' combination of `stratum_col_nms` columns. This allows you to have e.g.
+#' two hierarhical variables, one used for adjusting and one for stratifying
+#' output (such as 18 age groups of 5 years for adjusting and 4 larger age
+#' groups for stratifying output). See **Examples**.
+#'
+#' @section Tabulation:
+#'
+#' Currently every pair of columns in `union(stratum_col_nms, adjust_col_nms)`
+#' must be either
+#'
+#' - hierarhical: every level of B exists under exactly one level of A (or
+#'   converse); e.g. regions `c(1, 1, 2, 2)` and sub-regions `c(1, 2, 3, 4)`
+#' - cross-joined: every level of B is repeated for every level of A; e.g.
+#'   sexes `c(1, 1, 2, 2)` and regions `c(1, 2, 1, 2)`
+#'
+#' This ensures that adjusting will be performed properly, i.e. the weights
+#' are merged and used as intended.
+#'
 #' @examples
 #'
 #' # suppose we have poisson rates that we want to adjust for by age group.
@@ -54,9 +76,9 @@
 #'
 #' offsets <- rnorm(8, mean = 1000, sd = 100)
 #' baseline <- 100
-#' sex_hrs <- rep(1:2, each = 4)
-#' age_group_hrs <- rep(c(0.75, 0.90, 1.10, 1.25), times = 2)
-#' counts <- rpois(8, baseline * sex_hrs * age_group_hrs)
+#' hrs_by_sex <- rep(1:2, each = 4)
+#' hrs_by_ag <- rep(c(0.75, 0.90, 1.10, 1.25), times = 2)
+#' counts <- rpois(8, baseline * hrs_by_sex * hrs_by_ag)
 #'
 #' # raw estimates
 #' my_stats <- data.table(
@@ -78,8 +100,21 @@
 #'   weights = c(200, 300, 400, 100)
 #' )
 #'
+#' # adjusted by smaller age groups, stratified by larger age groups
+#' my_stats[, "ag2" := c(1,1, 2,2, 1,1, 2,2)]
+#' my_adj_stats <- direct_adjusted_estimates(
+#'   stats_dt = my_stats,
+#'   stat_col_nms = "e",
+#'   var_col_nms = "v",
+#'   conf_lvls = 0.95,
+#'   conf_methods = "log",
+#'   stratum_col_nms = c("sex", "ag2"),
+#'   adjust_col_nms = "ag",
+#'   weights = c(200, 300, 400, 100)
+#' )
+#'
 #' @importFrom data.table setDT := .SD set alloc.col setcolorder setkeyv
-#' setnames
+#' setnames uniqueN
 direct_adjusted_estimates <- function(
   stats_dt,
   stat_col_nms,
@@ -90,6 +125,8 @@ direct_adjusted_estimates <- function(
   conf_methods,
   weights
 ) {
+
+  call <- match.call()
 
   # assertions -----------------------------------------------------------------
   assert_is_data_table(stats_dt)
@@ -112,6 +149,8 @@ direct_adjusted_estimates <- function(
         stats_dt[[VCN]] > 0 | is.na(stats_dt[[VCN]])
       ), list(VCN = var_col_nm)))
     })
+  } else {
+    var_col_nms <- rep(NA_character_, length(stat_col_nms))
   }
   assert_is_double_nonNA_vector(conf_lvls)
   stopifnot(
@@ -122,17 +161,37 @@ direct_adjusted_estimates <- function(
     conf_methods %in% ALLOWED
   ), list(ALLOWED = allowed_conf_methods())))
 
+  # check that stratification makes sense --------------------------------------
+  stratum_col_nm_pairs <- combn(union(stratum_col_nms, adjust_col_nms), m = 2L)
+  lapply(1:ncol(stratum_col_nm_pairs), function(pair_no) {
+    pair <- stratum_col_nm_pairs[, pair_no]
+    udt <- unique(stats_dt, by = pair)
+
+    un1 <- data.table::uniqueN(udt[[pair[1]]])
+    un2 <- data.table::uniqueN(udt[[pair[2]]])
+    is_cj <- nrow(udt) == un1 * un2
+    if (is_cj) {
+      return(NULL)
+    }
+
+    is_hierachical <- nrow(udt) %in% c(un1, un2)
+    if (!is_hierachical) {
+      stop(simpleError(
+        paste0(
+          "stratum / adjust column pair ", deparse(pair),
+          " in stats_dt are not ",
+          "hierarchical nor cross-joined; see ",
+          "?direct_adjusted_estimates section Tabulation"
+        ),
+        call = call
+      ))
+    }
+  })
+
   # compute weighted averages --------------------------------------------------
   weights_dt <- weights_arg_to_weights_dt(weights = weights,
                                           stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
-
-  keep_col_nms <- c(stratum_col_nms, adjust_col_nms,
-                    stat_col_nms, setdiff(var_col_nms, NA))
-  stats_dt <- data.table::setDT(lapply(keep_col_nms, function(col_nm) {
-    stats_dt[[col_nm]]
-  }))
-  data.table::setnames(stats_dt, keep_col_nms)
 
   i.weight <- NULL # to appease our lord and saviour, R CMD CHECK
   stats_dt[
@@ -186,6 +245,15 @@ direct_adjusted_estimates <- function(
   }))
   data.table::setcolorder(stats_dt, c(stratum_col_nms, ordered_stat_col_nms))
   data.table::setkeyv(stats_dt, stratum_col_nms)
+  adjust_col_nms <- setdiff(adjust_col_nms, ".____TMP_STRATUM_DUMMY")
+  if (length(adjust_col_nms) == 0) {
+    adjust_col_nms <- NULL
+  }
+  data.table::setattr(
+    stats_dt, "direct_adjusting_meta",
+    mget(c("call", "stat_col_nms", "var_col_nms", "stratum_col_nms",
+           "adjust_col_nms", "conf_lvls", "conf_methods"))
+  )
 
   stats_dt[]
 }
