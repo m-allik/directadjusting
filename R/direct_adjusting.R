@@ -9,17 +9,32 @@
 #' @param stats_dt `[data.table]` (mandatory, no default)
 #'
 #' a `data.table` containing estimates and variance estimates of statistics
-#' @param specs_dt `[data.table]` (mandatory, no default)
+#' @param stat_col_nms `[character]` (mandatory, no default)
 #'
-#' a `data.table` specifying names of columns in `stats_dt` for the estimates
-#' (in column `est`) and their variance estimates (in column `var`);
-#' all columns of `stats_dt` specified in `specs_dt$est` are always adjusted, and
-#' those which have corresponding non-`NA` values in `specs_dt$var` will also
-#' have weighted variances computed, and from these the appropriate confidence
-#' intervals; the confidence levels should be given in `specs_dt$conf_lvl` and
-#' the method of computing the intervals in `specs_dt$conf_method`;
-#' see \code{\link{confidence_interval_methods}} for supported methods;
-#' see also **Examples**
+#' names of columns in `stats_dt` containing estimates (statistics);
+#' `NA` statistics values cause also `NA` confidence intervals
+#' @param var_col_nms `[character]` (optional, default `NULL`)
+#'
+#' - if `NULL`, no confidence intervals can (will) be computed
+#' - if `character` vector, names of columns in `stats_dt` containing variance
+#'   estimates of the statistics specified in `stat_col_nms` with one-to-one
+#'   correspondence; `NA` elements in `var_col_nms` cause no confidence
+#'   intervals to computed for those statistics;
+#'   `NA` variance estimates in `stats_dt` cause `NA` confidence intervals;
+#'   negative values cause an error; `Inf` values cause `c(-Inf, Inf)`
+#'   intervals with confidence interval method `"identity"`, etc.
+#' @param conf_lvls `[numeric]` (mandatory, default `0.95`)
+#'
+#' confidence levels for confidence intervals; you may specify each statistic
+#' (see `stat_col_nms`) its own level by supplying a vector of values;
+#' values other than between `(0, 1)` cause an error
+#' @param conf_methods `[character]` (mandatory, default `"identity"`)
+#'
+#' method to compute confidence intervals; either one string (to be used for
+#' all statistics) or a vector of strings, one for each element of
+#' `stat_col_nms`; use `"none"` for statistics for which you do not want
+#' confidence intervals to be calculated (or `NA` in `var_col_nms`)
+#' see \code{\link{confidence_interval_methods}} for supported methods
 #' @param stratum_col_nms `[NULL, character]` (optional, default `NULL`)
 #'
 #' names of columns in `stats_dt` by which statistics are stratified (and they
@@ -27,7 +42,7 @@
 #' @param adjust_col_nms `[character]` (mandatory, no default)
 #'
 #' names of columns in `stats_dt` by which statistics are currently stratified
-#' and by which the statistics should be adjusted
+#' and by which the statistics should be adjusted (e.g. `"agegroup"`)
 #' @template weights_arg
 #'
 #' @examples
@@ -52,96 +67,120 @@
 #' my_stats[["v"]] <- my_stats[["e"]] / offsets
 #'
 #' # adjusted by age group
-#' my_adj_stats <- direct_adjusted_esimates(
+#' my_adj_stats <- direct_adjusted_estimates(
 #'   stats_dt = my_stats,
-#'   specs_dt = data.table(est = "e", var = "v", conf_lvl = 0.95),
+#'   stat_col_nms = "e",
+#'   var_col_nms = "v",
+#'   conf_lvls = 0.95,
+#'   conf_methods = "log",
 #'   stratum_col_nms = "sex",
 #'   adjust_col_nms = "ag",
 #'   weights = c(200, 300, 400, 100)
 #' )
 #'
 #' @importFrom data.table setDT := .SD set alloc.col setcolorder setkeyv
+#' setnames
 direct_adjusted_estimates <- function(
   stats_dt,
-  specs_dt,
+  stat_col_nms,
+  var_col_nms,
   stratum_col_nms = NULL,
   adjust_col_nms,
+  conf_lvls,
+  conf_methods,
   weights
 ) {
 
   # assertions -----------------------------------------------------------------
   assert_is_data_table(stats_dt)
-  assert_is_data_table_with_required_names(
-    specs_dt,
-    required_names = c("est", "var", "conf_lvl", "conf_method")
-  )
-  assert_is_character_nonNA_vector(specs_dt[["est"]])
-  assert_is_character_vector(specs_dt[["var"]])
-  assert_is_double_nonNA_vector(specs_dt[["conf_lvl"]])
-  stopfinot(
-    specs_dt[["conf_lvl"]] > 0,
-    specs_dt[["conf_lvl"]] < 1
-  )
+  assert_is_character_nonNA_vector(stat_col_nms)
   assert_is_data_table_with_required_names(
     stats_dt,
-    required_names = c(specs_dt[["est"]], specs_dt[["var"]])
+    required_names = stat_col_nms
   )
+  assert_is_one_of(
+    var_col_nms,
+    fun_nms = c("assert_is_character_vector", "assert_is_NULL")
+  )
+  if (!is.null(var_col_nms)) {
+    assert_is_data_table_with_required_names(
+      stats_dt,
+      required_names = setdiff(var_col_nms, NA_character_)
+    )
+    lapply(setdiff(var_col_nms, NA_character_), function(var_col_nm) {
+      eval(substitute(stopifnot(
+        stats_dt[[VCN]] > 0 | is.na(stats_dt[[VCN]])
+      ), list(VCN = var_col_nm)))
+    })
+  }
+  assert_is_double_nonNA_vector(conf_lvls)
+  stopifnot(
+    conf_lvls > 0, conf_lvls < 1
+  )
+  assert_is_character_nonNA_vector(conf_methods)
+  eval(substitute(stopifnot(
+    conf_methods %in% ALLOWED
+  ), list(ALLOWED = allowed_conf_methods())))
 
   # compute weighted averages --------------------------------------------------
   weights_dt <- weights_arg_to_weights_dt(weights = weights,
+                                          stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
 
   keep_col_nms <- c(stratum_col_nms, adjust_col_nms,
-                    specs_dt[["est"]], setdiff(specs_dt[["var"]], NA))
+                    stat_col_nms, setdiff(var_col_nms, NA))
   stats_dt <- data.table::setDT(lapply(keep_col_nms, function(col_nm) {
     stats_dt[[col_nm]]
   }))
+  data.table::setnames(stats_dt, keep_col_nms)
 
-  stat_col_nms <- c(specs_dt[["est"]], setdiff(specs_dt[["var"]], NA))
   i.weight <- NULL # to appease our lord and saviour, R CMD CHECK
   stats_dt[
     i = weights_dt,
     on = eval(adjust_col_nms),
-    j = (stat_col_nms) := lapply(.SD, function(col) {
-      col * i.weight
-    })
+    j = ".__TMP_W" := i.weight
   ]
+  stats_dt[
+    j = ".__TMP_W" := .__TMP_W / sum(.__TMP_W),
+    by = eval(stratum_col_nms)
+  ]
+  value_col_nms <- c(stat_col_nms, setdiff(var_col_nms, NA))
   stats_dt <- stats_dt[
     j = lapply(.SD, sum),
-    .SDcols = stat_col_nms,
+    .SDcols = value_col_nms,
     keyby = eval(stratum_col_nms)
   ]
 
   # confidence intervals -------------------------------------------------------
-  lapply(1:nrow(specs_dt), function(i) {
+  lapply(1:length(stat_col_nms), function(i) {
 
-    est_col_nm <- specs_dt[["est"]][i]
-    var_col_nm <- specs_dt[["var"]][i]
-    conf_lvl <- specs_dt[["conf_lvl"]][i]
-    conf_method <- specs_dt[["conf_method"]][i]
-    if (is.na(conf_lvl) || is.na(conf_method) || conf_method == "none") {
+    stat_col_nm <- stat_col_nms[i]
+    var_col_nm <- var_col_nms[i]
+    conf_lvl <- conf_lvls[i]
+    conf_method <- conf_methods[i]
+    if (is.na(var_col_nm) || conf_method == "none") {
       return(NULL)
     }
-    ci_dt <- confidence_interval(
-      est = stats_dt[[est_col_nm]],
-      var = stats_dt[[var_col_nm]],
+    ci_dt <- confidence_intervals(
+      statistics = stats_dt[[stat_col_nm]],
+      variances = stats_dt[[var_col_nm]],
       conf_lvl = conf_lvl,
       conf_method = conf_method
     )
 
-    ci_col_nms <- paste0(est_col_nm, c("_lo", "_hi"))
+    ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
     data.table::set(stats_dt, j = ci_col_nms, value = ci_dt)
     data.table::alloc.col(stats_dt)
     NULL
   })
 
   # final touches --------------------------------------------------------------
-  ordered_stat_col_nms <- unlist(lapply(1:nrow(specs_dt), function(i) {
-    est_col_nm <- specs_dt[["est"]]
-    var_col_nm <- specs_dt[["var"]]
-    ci_col_nms <- paste0(est_col_nm, c("_lo", "_hi"))
+  ordered_stat_col_nms <- unlist(lapply(1:length(stat_col_nms), function(i) {
+    stat_col_nm <- stat_col_nms
+    var_col_nm <- var_col_nms
+    ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
 
-    stat_col_nms <- intersect(c(est_col_nm, var_col_nm, ci_col_nms),
+    stat_col_nms <- intersect(c(stat_col_nm, var_col_nm, ci_col_nms),
                               names(stats_dt))
     stat_col_nms
   }))
@@ -154,14 +193,49 @@ direct_adjusted_estimates <- function(
 
 
 
-
-confidence_interval <- function(
-  est,
-  var,
+allowed_conf_methods <- function() {
+  c("none", "identity", "log", "log-log")
+}
+#' @importFrom data.table := setattr
+confidence_intervals <- function(
+  statistics,
+  variances,
   conf_lvl,
   conf_method
 ) {
-  stop("TODO")
+  assert_is_number_vector(statistics)
+  assert_is_number_vector(variances)
+  assert_is_double_nonNA_atom(conf_lvl)
+  assert_is_character_nonNA_atom(conf_method)
+  eval(substitute(stopifnot(
+    variances > 0 | is.na(variances),
+    conf_lvl > 0,
+    conf_lvl < 1,
+    conf_method %in% ALLOWED
+  ), list(ALLOWED = setdiff(allowed_conf_methods(), "none"))))
+
+  math <- switch(
+    conf_method,
+    identity = quote(STAT + Z * STD_ERR),
+    log = quote(STAT * exp(Z * STD_ERR / STAT)),
+    `log-log` = quote({
+      STAT ** exp(-Z * (STD_ERR / (abs(log(STAT)) * STAT)))
+    }),
+    stop("No math defined for conf_method = ", deparse(conf_method))
+  )
+
+  dt <- data.table::setDT(list(STAT = statistics, STD_ERR = sqrt(variances)))
+  Z <- qnorm(p = (1 - conf_lvl) / 2)
+  expr <- substitute(dt[, "ci_lo" := MATH], list(MATH = math))
+  eval(expr)
+  Z <- qnorm(p = conf_lvl + (1 - conf_lvl) / 2)
+  expr <- substitute(dt[, "ci_hi" := MATH], list(MATH = math))
+  eval(expr)
+
+  data.table::setattr(
+    dt, name = "ci_meta", value = mget(c("conf_lvl", "conf_method", "math"))
+  )
+  dt[j = .SD, .SDcols = c("ci_lo", "ci_hi")]
 }
 
 

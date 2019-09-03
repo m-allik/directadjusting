@@ -17,7 +17,7 @@ weights_arg_to_weights_dt.numeric <- function(
   adjust_col_nms,
   stats_dt
 ) {
-  assert_is_double_nonNA_gtezero_vector(weights)
+  assert_is_double_nonNA_gtzero_vector(weights)
   assert_is_character_nonNA_atom(adjust_col_nms)
   stopifnot(
     length(weights) == data.table::uniqueN(stats_dt[[adjust_col_nms]])

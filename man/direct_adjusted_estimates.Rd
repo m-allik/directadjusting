@@ -4,25 +4,31 @@
 \alias{direct_adjusted_estimates}
 \title{Direct Adjusted Estimates}
 \usage{
-direct_adjusted_estimates(stats_dt, specs_dt, stratum_col_nms = NULL,
-  adjust_col_nms, weights)
+direct_adjusted_estimates(stats_dt, stat_col_nms, var_col_nms,
+  stratum_col_nms = NULL, adjust_col_nms, conf_lvls, conf_methods,
+  weights)
 }
 \arguments{
 \item{stats_dt}{\code{[data.table]} (mandatory, no default)
 
 a \code{data.table} containing estimates and variance estimates of statistics}
 
-\item{specs_dt}{\code{[data.table]} (mandatory, no default)
+\item{stat_col_nms}{\code{[character]} (mandatory, no default)
 
-a \code{data.table} specifying names of columns in \code{stats_dt} for the estimates
-(in column \code{est}) and their variance estimates (in column \code{var});
-all columns of \code{stats_dt} specified in \code{specs_dt$est} are always adjusted, and
-those which have corresponding non-\code{NA} values in \code{specs_dt$var} will also
-have weighted variances computed, and from these the appropriate confidence
-intervals; the confidence levels should be given in \code{specs_dt$conf_lvl} and
-the method of computing the intervals in \code{specs_dt$conf_method};
-see \code{\link{confidence_interval_methods}} for supported methods;
-see also \strong{Examples}}
+names of columns in \code{stats_dt} containing estimates (statistics);
+\code{NA} statistics values cause also \code{NA} confidence intervals}
+
+\item{var_col_nms}{\code{[character]} (optional, default \code{NULL})
+\itemize{
+\item if \code{NULL}, no confidence intervals can (will) be computed
+\item if \code{character} vector, names of columns in \code{stats_dt} containing variance
+estimates of the statistics specified in \code{stat_col_nms} with one-to-one
+correspondence; \code{NA} elements in \code{var_col_nms} cause no confidence
+intervals to computed for those statistics;
+\code{NA} variance estimates in \code{stats_dt} cause \code{NA} confidence intervals;
+negative values cause an error; \code{Inf} values cause \code{c(-Inf, Inf)}
+intervals with confidence interval method \code{"identity"}, etc.
+}}
 
 \item{stratum_col_nms}{\code{[NULL, character]} (optional, default \code{NULL})
 
@@ -32,7 +38,21 @@ should be stratified by these columns after direct adjusting)}
 \item{adjust_col_nms}{\code{[character]} (mandatory, no default)
 
 names of columns in \code{stats_dt} by which statistics are currently stratified
-and by which the statistics should be adjusted}
+and by which the statistics should be adjusted (e.g. \code{"agegroup"})}
+
+\item{conf_lvls}{\code{[numeric]} (mandatory, default \code{0.95})
+
+confidence levels for confidence intervals; you may specify each statistic
+(see \code{stat_col_nms}) its own level by supplying a vector of values;
+values other than between \code{(0, 1)} cause an error}
+
+\item{conf_methods}{\code{[character]} (mandatory, default \code{"identity"})
+
+method to compute confidence intervals; either one string (to be used for
+all statistics) or a vector of strings, one for each element of
+\code{stat_col_nms}; use \code{"none"} for statistics for which you do not want
+confidence intervals to be calculated (or \code{NA} in \code{var_col_nms})
+see \code{\link{confidence_interval_methods}} for supported methods}
 
 \item{weights}{\code{[double, data.table, character]}
 
@@ -75,9 +95,12 @@ my_stats <- data.table(
 my_stats[["v"]] <- my_stats[["e"]] / offsets
 
 # adjusted by age group
-my_adj_stats <- direct_adjusted_esimates(
+my_adj_stats <- direct_adjusted_estimates(
   stats_dt = my_stats,
-  specs_dt = data.table(est = "e", var = "v", conf_lvl = 0.95),
+  stat_col_nms = "e",
+  var_col_nms = "v",
+  conf_lvls = 0.95,
+  conf_methods = "log",
   stratum_col_nms = "sex",
   adjust_col_nms = "ag",
   weights = c(200, 300, 400, 100)

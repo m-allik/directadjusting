@@ -16,7 +16,7 @@ devtools::install_github("WetRobot/directadjusting")
 This is a basic example which shows you how to solve a common problem:
 
 ``` r
-library(directadjusting)
+library("directadjusting")
 
 # suppose we have poisson rates that we want to adjust for by age group.
 # they are stratified by sex.
@@ -38,13 +38,17 @@ my_stats <- data.table(
 my_stats[["v"]] <- my_stats[["e"]] / offsets
 
 # adjusted by age group
-my_adj_stats <- direct_adjusted_esimates(
+my_adj_stats <- direct_adjusted_estimates(
   stats_dt = my_stats,
-  specs_dt = data.table(est = "e", var = "v", conf_lvl = 0.95),
+  stat_col_nms = "e",
+  var_col_nms = "v",
+  conf_lvls = 0.95,
+  conf_methods = "log",
   stratum_col_nms = "sex",
   adjust_col_nms = "ag",
   weights = c(200, 300, 400, 100)
 )
+
 
 ```
 
