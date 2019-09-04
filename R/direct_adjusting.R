@@ -33,8 +33,8 @@
 #' method to compute confidence intervals; either one string (to be used for
 #' all statistics) or a vector of strings, one for each element of
 #' `stat_col_nms`; use `"none"` for statistics for which you do not want
-#' confidence intervals to be calculated (or `NA` in `var_col_nms`)
-#' see \code{\link{confidence_interval_methods}} for supported methods
+#' confidence intervals to be calculated (or `NA` in `var_col_nms`);
+#' see \code{\link{confidence_intervals}} for supported methods
 #' @param stratum_col_nms `[NULL, character]` (optional, default `NULL`)
 #'
 #' names of columns in `stats_dt` by which statistics are stratified (and they
@@ -113,8 +113,40 @@
 #'   weights = c(200, 300, 400, 100)
 #' )
 #'
+#' # survival example; see help("survival.formula")
+#' if (requireNamespace("survival", quietly = TRUE)) {
+#'   library("survival")
+#'   library("data.table")
+#'   fit <- survfit(Surv(time, status) ~ x, data = aml)
+#'   surv_stats <- summary(fit, times = 0:40)
+#'   surv_dt <- data.table::data.table(
+#'     x = surv_stats[["strata"]],
+#'     time = surv_stats[["time"]],
+#'     surv = surv_stats[["surv"]],
+#'     var = surv_stats[["std.err"]] ** 2
+#'   )
+#'   surv_dt_adj <- direct_adjusted_estimates(
+#'     stats_dt = surv_dt,
+#'     stat_col_nms = "surv",
+#'     var_col_nms = "var",
+#'     conf_lvls = 0.95,
+#'     conf_methods = "log-log",
+#'     stratum_col_nms = "time",
+#'     adjust_col_nms = "x",
+#'     weights = c(600, 400)
+#'   )
+#'   print(surv_dt_adj, nrows = 10)
+#'   matplot(
+#'     y = surv_dt_adj[, .(surv, surv_lo, surv_hi)], 
+#'     x = surv_dt_adj[["time"]], type = "s", col = 1, lty = 1,
+#'     xlab = "time", ylab = "survival",
+#'     main = "Survival with 95 % CIs"
+#'   )
+#' }
+#'
 #' @importFrom data.table setDT := .SD set alloc.col setcolorder setkeyv
 #' setnames uniqueN
+#' @export
 direct_adjusted_estimates <- function(
   stats_dt,
   stat_col_nms,
@@ -146,7 +178,7 @@ direct_adjusted_estimates <- function(
     )
     lapply(setdiff(var_col_nms, NA_character_), function(var_col_nm) {
       eval(substitute(stopifnot(
-        stats_dt[[VCN]] > 0 | is.na(stats_dt[[VCN]])
+        stats_dt[[VCN]] >= 0 | is.na(stats_dt[[VCN]])
       ), list(VCN = var_col_nm)))
     })
   } else {
@@ -162,31 +194,50 @@ direct_adjusted_estimates <- function(
   ), list(ALLOWED = allowed_conf_methods())))
 
   # check that stratification makes sense --------------------------------------
-  stratum_col_nm_pairs <- combn(union(stratum_col_nms, adjust_col_nms), m = 2L)
-  lapply(1:ncol(stratum_col_nm_pairs), function(pair_no) {
-    pair <- stratum_col_nm_pairs[, pair_no]
-    udt <- unique(stats_dt, by = pair)
-
-    un1 <- data.table::uniqueN(udt[[pair[1]]])
-    un2 <- data.table::uniqueN(udt[[pair[2]]])
-    is_cj <- nrow(udt) == un1 * un2
-    if (is_cj) {
-      return(NULL)
-    }
-
-    is_hierachical <- nrow(udt) %in% c(un1, un2)
-    if (!is_hierachical) {
-      stop(simpleError(
-        paste0(
-          "stratum / adjust column pair ", deparse(pair),
-          " in stats_dt are not ",
-          "hierarchical nor cross-joined; see ",
-          "?direct_adjusted_estimates section Tabulation"
-        ),
-        call = call
-      ))
-    }
-  })
+  
+  keep_col_nms <- setdiff(
+    c(stratum_col_nms, adjust_col_nms, stat_col_nms, var_col_nms), NA_character_
+  )
+  stats_dt <- data.table::setDT(lapply(keep_col_nms, function(col_nm) {
+    stats_dt[[col_nm]]
+  }))
+  data.table::setnames(stats_dt, keep_col_nms)
+  if (length(stratum_col_nms) == 0L) {
+    stratum_col_nms <- ".____TMP_STRATUM_DUMMY"
+    on.exit(stats_dt[, ".____TMP_STRATUM_DUMMY" := NULL])
+    stats_dt[, ".____TMP_STRATUM_DUMMY" := NA]
+  }
+  test_col_nms <- setdiff(
+    union(stratum_col_nms, adjust_col_nms),
+    ".____TMP_STRATUM_DUMMY"
+  )
+  if (length(test_col_nms) > 1) {
+    stratum_col_nm_pairs <- combn(test_col_nms, m = 2L)
+    lapply(1:ncol(stratum_col_nm_pairs), function(pair_no) {
+      pair <- stratum_col_nm_pairs[, pair_no]
+      udt <- unique(stats_dt, by = pair)
+      
+      un1 <- data.table::uniqueN(udt[[pair[1]]])
+      un2 <- data.table::uniqueN(udt[[pair[2]]])
+      is_cj <- nrow(udt) == un1 * un2
+      if (is_cj) {
+        return(NULL)
+      }
+      
+      is_hierachical <- nrow(udt) %in% c(un1, un2)
+      if (!is_hierachical) {
+        stop(simpleError(
+          paste0(
+            "stratum / adjust column pair ", deparse(pair),
+            " in stats_dt are not ",
+            "hierarchical nor cross-joined; see ",
+            "?direct_adjusted_estimates section Tabulation"
+          ),
+          call = call
+        ))
+      }
+    })
+  }
 
   # compute weighted averages --------------------------------------------------
   weights_dt <- weights_arg_to_weights_dt(weights = weights,
@@ -204,6 +255,12 @@ direct_adjusted_estimates <- function(
     by = eval(stratum_col_nms)
   ]
   value_col_nms <- c(stat_col_nms, setdiff(var_col_nms, NA))
+  stats_dt <- stats_dt[
+    j = (value_col_nms) := lapply(.SD, function(col) {
+      col * .__TMP_W
+    }),
+    .SDcols = value_col_nms
+    ]
   stats_dt <- stats_dt[
     j = lapply(.SD, sum),
     .SDcols = value_col_nms,
@@ -228,7 +285,13 @@ direct_adjusted_estimates <- function(
     )
 
     ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
-    data.table::set(stats_dt, j = ci_col_nms, value = ci_dt)
+    data.table::set(
+      stats_dt, 
+      j = ci_col_nms, 
+      value = lapply(c("ci_lo", "ci_hi"), function(col_nm) {
+        ci_dt[[col_nm]]
+      })
+    )
     data.table::alloc.col(stats_dt)
     NULL
   })
@@ -261,36 +324,87 @@ direct_adjusted_estimates <- function(
 
 
 
+
 allowed_conf_methods <- function() {
   c("none", "identity", "log", "log-log")
 }
-#' @importFrom data.table := setattr
+confidence_interval_expression <- function(conf_method) {
+  assert_is_character_nonNA_atom(conf_method)
+  stopifnot(
+    conf_method %in% allowed_conf_methods()
+  )
+  math <- switch(
+    conf_method,
+    identity = quote(STAT + Z * STD_ERR),
+    log = quote(STAT * exp(Z * STD_ERR / STAT)),
+    `log-log` = quote( STAT ** exp(-Z * (STD_ERR / (abs(log(STAT)) * STAT)))),
+    stop("No math defined for conf_method = ", deparse(conf_method))
+  )
+}
+#' @md
+#' @title Confidence Intervals
+#' @description
+#' Computes different kinds of confidence intervals given the statistics
+#' and their variance estimates.
+#' @param statistics `[numeric]` (mandatory, no default)
+#' 
+#' statistics for which to calculate confidence intervals
+#' @param variances `[numeric]` (mandatory, no default)
+#' 
+#' variance estimates of `statistics` used to compute confidence intervals
+#' @param conf_lvl `[numeric]` (mandatory, default `0.95`)
+#' 
+#' confidence level of confidence intervals in `]0, 1[`
+#' @param conf_method `[character]` (mandatory, default `"identity"`)
+#' 
+#' see section **Confidence interval methods**
+#' @importFrom data.table := setattr setnames set
+#' @eval {
+#' conf_methods <- setdiff(allowed_conf_methods(), "none")
+#' maths <- vapply(conf_methods, function(conf_method) {
+#'   paste0(deparse(confidence_interval_expression(conf_method)), collapse = "")
+#' }, character(1))
+#' c(
+#'   "@section Confidence interval methods:\n",
+#'   "Currently supported confidence interval methods and their formulae:\n",
+#'   "\\itemize{",
+#'   paste0(" \\item ", conf_methods, ": ", maths, collapse = ""),
+#'   "}",
+#'   "\n",
+#'   "Where\n",
+#'   "\\itemize{",
+#'   " \\item STAT is the statistic,\n",
+#'   " \\item Z is the quantile from the standard normal distribution for the ",
+#'   "   lower or upper bound, and\n",
+#'   " \\item STD_ERR is the standard error (square root of the variance)\n",
+#'   "}"
+#' )
+#' }
+#' @return 
+#' `data.table` with columns
+#' - `statistic`: the values you supplied via argument `statistics`
+#' - `variance`: the values you supplied via argument `variances`
+#' - `ci_lo`: lower bound of confidence interval
+#' - `ci_hi`: upper bound of confidence interval
+#' @export
 confidence_intervals <- function(
   statistics,
   variances,
-  conf_lvl,
-  conf_method
+  conf_lvl = 0.95,
+  conf_method = "identity"
 ) {
   assert_is_number_vector(statistics)
   assert_is_number_vector(variances)
   assert_is_double_nonNA_atom(conf_lvl)
   assert_is_character_nonNA_atom(conf_method)
   eval(substitute(stopifnot(
-    variances > 0 | is.na(variances),
+    variances >= 0 | is.na(variances),
     conf_lvl > 0,
     conf_lvl < 1,
     conf_method %in% ALLOWED
   ), list(ALLOWED = setdiff(allowed_conf_methods(), "none"))))
 
-  math <- switch(
-    conf_method,
-    identity = quote(STAT + Z * STD_ERR),
-    log = quote(STAT * exp(Z * STD_ERR / STAT)),
-    `log-log` = quote({
-      STAT ** exp(-Z * (STD_ERR / (abs(log(STAT)) * STAT)))
-    }),
-    stop("No math defined for conf_method = ", deparse(conf_method))
-  )
+  math <- confidence_interval_expression(conf_method = conf_method)
 
   dt <- data.table::setDT(list(STAT = statistics, STD_ERR = sqrt(variances)))
   Z <- qnorm(p = (1 - conf_lvl) / 2)
@@ -303,7 +417,14 @@ confidence_intervals <- function(
   data.table::setattr(
     dt, name = "ci_meta", value = mget(c("conf_lvl", "conf_method", "math"))
   )
-  dt[j = .SD, .SDcols = c("ci_lo", "ci_hi")]
+  data.table::setnames(dt, c("STAT", "STD_ERR"), c("statistic", "variance"))
+  data.table::set(
+    dt,
+    j = "variance",
+    value = dt[["variance"]] ** 2
+  )
+  data.table::setcolorder(dt, c("statistic", "variance", "ci_lo", "ci_hi"))
+  dt[]
 }
 
 

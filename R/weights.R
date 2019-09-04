@@ -39,11 +39,11 @@ assert_is_weights_dt <- function(
 ) {
   assert_is_data_table_with_required_names(
     x = weights_dt,
-    required.names = c(adjust_col_nms, "weight")
+    required_names = c(adjust_col_nms, "weight")
   )
   assert_is_data_table_with_required_names(
     x = stats_dt,
-    required.names = c(adjust_col_nms)
+    required_names = c(adjust_col_nms)
   )
   assert_is_double_nonNA_gtezero_vector(weights_dt[["weight"]])
   lapply(adjust_col_nms, function(col_nm) {

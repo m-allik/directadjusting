@@ -51,8 +51,8 @@ values other than between \code{(0, 1)} cause an error}
 method to compute confidence intervals; either one string (to be used for
 all statistics) or a vector of strings, one for each element of
 \code{stat_col_nms}; use \code{"none"} for statistics for which you do not want
-confidence intervals to be calculated (or \code{NA} in \code{var_col_nms})
-see \code{\link{confidence_interval_methods}} for supported methods}
+confidence intervals to be calculated (or \code{NA} in \code{var_col_nms});
+see \code{\link{confidence_intervals}} for supported methods}
 
 \item{weights}{\code{[double, data.table, character]}
 
@@ -145,5 +145,36 @@ my_adj_stats <- direct_adjusted_estimates(
   adjust_col_nms = "ag",
   weights = c(200, 300, 400, 100)
 )
+
+# survival example; see help("survival.formula")
+if (requireNamespace("survival", quietly = TRUE)) {
+  library("survival")
+  library("data.table")
+  fit <- survfit(Surv(time, status) ~ x, data = aml)
+  surv_stats <- summary(fit, times = 0:40)
+  surv_dt <- data.table::data.table(
+    x = surv_stats[["strata"]],
+    time = surv_stats[["time"]],
+    surv = surv_stats[["surv"]],
+    var = surv_stats[["std.err"]] ** 2
+  )
+  surv_dt_adj <- direct_adjusted_estimates(
+    stats_dt = surv_dt,
+    stat_col_nms = "surv",
+    var_col_nms = "var",
+    conf_lvls = 0.95,
+    conf_methods = "log-log",
+    stratum_col_nms = "time",
+    adjust_col_nms = "x",
+    weights = c(600, 400)
+  )
+  print(surv_dt_adj, nrows = 10)
+  matplot(
+    y = surv_dt_adj[, .(surv, surv_lo, surv_hi)], 
+    x = surv_dt_adj[["time"]], type = "s", col = 1, lty = 1,
+    xlab = "time", ylab = "survival",
+    main = "Survival with 95 \% CIs"
+  )
+}
 
 }
