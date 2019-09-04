@@ -150,7 +150,15 @@ assert_is_logical <- function(x, x_nm = NULL) {
   }
   invisible(NULL)
 }
-
+assert_is_Date <- function(x, x_nm = NULL) {
+  if (is.null(x_nm)) {
+    x_nm <- deparse(substitute(x))
+  }
+  if (!inherits(x, "Date")) {
+    stop(deparse(x_nm), " is not a Date object (see ?\"Date\")")
+  }
+  invisible(NULL)
+}
 
 assert_is_atom <- function(x, x_nm = NULL) {
   if (is.null(x_nm)) {
@@ -360,7 +368,7 @@ generate_assertions <- function() {
   lines <- c(lines[1:wh_start], rep("", 5))
 
   levels <- list(
-    c("double", "number", "integer", "character", "logical"),
+    c("double", "number", "integer", "Date", "character", "logical"),
     "_",
     c("nonNA", ""),
     "_",
@@ -372,7 +380,7 @@ generate_assertions <- function() {
   fun_nm_dt <- do.call(data.table::CJ, levels)
   data.table::setkeyv(fun_nm_dt, names(fun_nm_dt))
   fun_nm_dt <- fun_nm_dt[
-    !(fun_nm_dt[["V1"]] %in% c("character", "logical") & 
+    !(fun_nm_dt[["V1"]] %in% c("character", "logical", "Date") & 
         fun_nm_dt[["V5"]] != ""), 
     ]
   fun_nms <- do.call(paste0, fun_nm_dt)
@@ -403,6 +411,63 @@ generate_assertions()
 
 
 # ---- only auto-generated assertion functions below this line -----------------
+
+
+
+
+
+assert_is_Date_atom <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_atom(x = x, x_nm = x_nm)
+}
+
+
+
+
+
+assert_is_Date_matrix <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_matrix(x = x, x_nm = x_nm)
+}
+
+
+
+
+
+assert_is_Date_vector <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_vector(x = x, x_nm = x_nm)
+}
+
+
+
+
+
+assert_is_Date_nonNA_atom <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_nonNA(x = x, x_nm = x_nm)
+  assert_is_atom(x = x, x_nm = x_nm)
+}
+
+
+
+
+
+assert_is_Date_nonNA_matrix <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_nonNA(x = x, x_nm = x_nm)
+  assert_is_matrix(x = x, x_nm = x_nm)
+}
+
+
+
+
+
+assert_is_Date_nonNA_vector <- function(x, x_nm = NULL) {
+  assert_is_Date(x = x, x_nm = x_nm)
+  assert_is_nonNA(x = x, x_nm = x_nm)
+  assert_is_vector(x = x, x_nm = x_nm)
+}
 
 
 
