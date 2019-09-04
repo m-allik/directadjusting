@@ -4,17 +4,18 @@
 
 
 #' @md
-#' @name integrated_weight_schemas
 #' @title Integrated Weight Schemas
 #' @description Weighting schemas included in this package.
-#' @details
+#' @format
+#' `data.table` with columns
+#' 
+#' - `schema_name`: name of weights schema as a string
+#' - `n_age_groups`: number of age groups in schema
+#' - `age_low`: lower bound of age group
 #'
-#' **TODO**
+#' All age groups are lower-bound inclusive upper-bound exclusive
+#' (`[a, b[`).
 #'
-#' - "ICSS"
-#' - "world_1967_18of5"
-#' - etc
-#'
-
+"integrated_weight_schemas"
 
 

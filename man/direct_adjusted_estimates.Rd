@@ -90,10 +90,12 @@ groups for stratifying output). See \strong{Examples}.
 Currently every pair of columns in \code{union(stratum_col_nms, adjust_col_nms)}
 must be either
 \itemize{
-\item hierarhical: every level of B exists under exactly one level of A (or
-converse); e.g. regions \code{c(1, 1, 2, 2)} and sub-regions \code{c(1, 2, 3, 4)}
+\item hierarhical: each level of B exists under exactly one level of A (or
+converse); e.g. regions \code{c(1, 1, 2, 2)} and sub-regions \code{c(1, 2, 3, 4)};
+sub-regions \code{c(1, 2, 2, 3)} would not be hierarchical
 \item cross-joined: every level of B is repeated for every level of A; e.g.
-sexes \code{c(1, 1, 2, 2)} and regions \code{c(1, 2, 1, 2)}
+sexes \code{c(1, 1, 2, 2)} and regions \code{c(1, 2, 1, 2)};
+regions \code{c(1, 2, 2, 3)} would not be cross-joined
 }
 
 This ensures that adjusting will be performed properly, i.e. the weights
@@ -114,12 +116,12 @@ hrs_by_ag <- rep(c(0.75, 0.90, 1.10, 1.25), times = 2)
 counts <- rpois(8, baseline * hrs_by_sex * hrs_by_ag)
 
 # raw estimates
-my_stats <- data.table(
+my_stats <- data.table::data.table(
   sex = rep(1:2, each = 4),
   ag = rep(1:4, times = 2),
-  e = counts / offsets
+  e = counts / offsets,
+  v = counts / (offsets ** 2)
 )
-my_stats[["v"]] <- my_stats[["e"]] / offsets
 
 # adjusted by age group
 my_adj_stats <- direct_adjusted_estimates(

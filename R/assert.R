@@ -371,7 +371,10 @@ generate_assertions <- function() {
 
   fun_nm_dt <- do.call(data.table::CJ, levels)
   data.table::setkeyv(fun_nm_dt, names(fun_nm_dt))
-  fun_nm_dt <- fun_nm_dt[!(V1 %in% c("character", "logical") & V5 != ""), ]
+  fun_nm_dt <- fun_nm_dt[
+    !(fun_nm_dt[["V1"]] %in% c("character", "logical") & 
+        fun_nm_dt[["V5"]] != ""), 
+    ]
   fun_nms <- do.call(paste0, fun_nm_dt)
   fun_nms <- paste0("assert_is_", fun_nms)
   fun_nms <- gsub("_{1,}", "_", fun_nms)

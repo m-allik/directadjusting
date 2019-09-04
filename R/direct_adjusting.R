@@ -59,10 +59,12 @@
 #' Currently every pair of columns in `union(stratum_col_nms, adjust_col_nms)`
 #' must be either
 #'
-#' - hierarhical: every level of B exists under exactly one level of A (or
-#'   converse); e.g. regions `c(1, 1, 2, 2)` and sub-regions `c(1, 2, 3, 4)`
+#' - hierarhical: each level of B exists under exactly one level of A (or
+#'   converse); e.g. regions `c(1, 1, 2, 2)` and sub-regions `c(1, 2, 3, 4)`;
+#'   sub-regions `c(1, 2, 2, 3)` would not be hierarchical
 #' - cross-joined: every level of B is repeated for every level of A; e.g.
-#'   sexes `c(1, 1, 2, 2)` and regions `c(1, 2, 1, 2)`
+#'   sexes `c(1, 1, 2, 2)` and regions `c(1, 2, 1, 2)`;
+#'   regions `c(1, 2, 2, 3)` would not be cross-joined
 #'
 #' This ensures that adjusting will be performed properly, i.e. the weights
 #' are merged and used as intended.
@@ -81,12 +83,12 @@
 #' counts <- rpois(8, baseline * hrs_by_sex * hrs_by_ag)
 #'
 #' # raw estimates
-#' my_stats <- data.table(
+#' my_stats <- data.table::data.table(
 #'   sex = rep(1:2, each = 4),
 #'   ag = rep(1:4, times = 2),
-#'   e = counts / offsets
+#'   e = counts / offsets,
+#'   v = counts / (offsets ** 2)
 #' )
-#' my_stats[["v"]] <- my_stats[["e"]] / offsets
 #'
 #' # adjusted by age group
 #' my_adj_stats <- direct_adjusted_estimates(
@@ -144,9 +146,10 @@
 #'   )
 #' }
 #'
+#' @export
 #' @importFrom data.table setDT := .SD set alloc.col setcolorder setkeyv
 #' setnames uniqueN
-#' @export
+#' @importFrom utils combn
 direct_adjusted_estimates <- function(
   stats_dt,
   stat_col_nms,
@@ -212,7 +215,7 @@ direct_adjusted_estimates <- function(
     ".____TMP_STRATUM_DUMMY"
   )
   if (length(test_col_nms) > 1) {
-    stratum_col_nm_pairs <- combn(test_col_nms, m = 2L)
+    stratum_col_nm_pairs <- utils::combn(test_col_nms, m = 2L)
     lapply(1:ncol(stratum_col_nm_pairs), function(pair_no) {
       pair <- stratum_col_nm_pairs[, pair_no]
       udt <- unique(stats_dt, by = pair)
@@ -244,7 +247,7 @@ direct_adjusted_estimates <- function(
                                           stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
 
-  i.weight <- NULL # to appease our lord and saviour, R CMD CHECK
+  .__TMP_W <- i.weight <- NULL # to appease our lord and saviour, R CMD CHECK
   stats_dt[
     i = weights_dt,
     on = eval(adjust_col_nms),
@@ -358,7 +361,6 @@ confidence_interval_expression <- function(conf_method) {
 #' @param conf_method `[character]` (mandatory, default `"identity"`)
 #' 
 #' see section **Confidence interval methods**
-#' @importFrom data.table := setattr setnames set
 #' @eval {
 #' conf_methods <- setdiff(allowed_conf_methods(), "none")
 #' maths <- vapply(conf_methods, function(conf_method) {
@@ -387,6 +389,8 @@ confidence_interval_expression <- function(conf_method) {
 #' - `ci_lo`: lower bound of confidence interval
 #' - `ci_hi`: upper bound of confidence interval
 #' @export
+#' @importFrom data.table := setattr setnames set
+#' @importFrom stats qnorm
 confidence_intervals <- function(
   statistics,
   variances,
@@ -407,10 +411,10 @@ confidence_intervals <- function(
   math <- confidence_interval_expression(conf_method = conf_method)
 
   dt <- data.table::setDT(list(STAT = statistics, STD_ERR = sqrt(variances)))
-  Z <- qnorm(p = (1 - conf_lvl) / 2)
+  Z <- stats::qnorm(p = (1 - conf_lvl) / 2)
   expr <- substitute(dt[, "ci_lo" := MATH], list(MATH = math))
   eval(expr)
-  Z <- qnorm(p = conf_lvl + (1 - conf_lvl) / 2)
+  Z <- stats::qnorm(p = conf_lvl + (1 - conf_lvl) / 2)
   expr <- substitute(dt[, "ci_hi" := MATH], list(MATH = math))
   eval(expr)
 
