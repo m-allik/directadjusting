@@ -6,7 +6,8 @@
 \usage{
 direct_adjusted_estimates(stats_dt, stat_col_nms, var_col_nms,
   stratum_col_nms = NULL, adjust_col_nms, conf_lvls, conf_methods,
-  weights, boot_arg_list = NULL, boot_ci_arg_list = NULL)
+  weights, boot_arg_list = list(R = 1000), boot_ci_arg_list = list(type
+  = "perc"))
 }
 \arguments{
 \item{stats_dt}{\code{[data.table]} (mandatory, no default)
@@ -50,9 +51,14 @@ values other than between \code{(0, 1)} cause an error}
 
 method to compute confidence intervals; either one string (to be used for
 all statistics) or a vector of strings, one for each element of
-\code{stat_col_nms}; use \code{"none"} for statistics for which you do not want
-confidence intervals to be calculated (or \code{NA} in \code{var_col_nms});
-see \code{\link{delta_method_confidence_intervals}} for supported methods}
+\code{stat_col_nms}; see \code{\link{delta_method_confidence_intervals}} for
+supported delta method confidence intervals; other allowed values:
+\itemize{
+\item \code{"none"}: for statistics for which you do not want
+confidence intervals to be calculated (or \code{NA} in \code{var_col_nms})
+\item \code{"boot"}: bootstrapped confidence intervals --- see args \code{boot_arg_list},
+\code{boot_ci_arg_list} and section \strong{Bootstrap}
+}}
 
 \item{weights}{\code{[double, data.table, character]}
 
@@ -69,6 +75,16 @@ variables that are used to adjust estimates, and one column named
 into this package; see \code{\link{integrated_weight_schemas}}; again
 this is only allowed when you are adjusting by exactly one variable
 }}
+
+\item{boot_arg_list}{\code{[list]} (mandatory, default \code{list(R = 1000)})
+
+arguments passed to \code{\link[boot]{boot}} with \code{data}, \code{statistic}, and
+\code{stype} overridden internally}
+
+\item{boot_ci_arg_list}{\code{[list]} (mandatory, default \code{list(type = "perc")})
+
+arguments passed to \code{\link[boot]{boot.ci}} with \code{boot.out} and \code{conf}
+overridden internally (latter comes from \code{conf_levels})}
 }
 \description{
 Compute direct adjusted estimates from a table of statistics.
@@ -102,6 +118,16 @@ This ensures that adjusting will be performed properly, i.e. the weights
 are merged and used as intended.
 }
 
+\section{Bootstrap}{
+
+
+Confidence intervals can be approximated using bootstrap.
+\code{\link[boot]{boot.ci}} is called with \code{stype = "w"}, i.e. the
+bootstrap is based on random sampling of weights within each stratum
+defined by \code{stratum_col_nms} for each stratification defined by
+\code{adjust_col_nms}. You have to know whether this is appropriate or not.
+}
+
 \examples{
 
 # suppose we have poisson rates that we want to adjust for by age group.
@@ -130,6 +156,18 @@ my_adj_stats <- direct_adjusted_estimates(
   var_col_nms = "v",
   conf_lvls = 0.95,
   conf_methods = "log",
+  stratum_col_nms = "sex",
+  adjust_col_nms = "ag",
+  weights = c(200, 300, 400, 100)
+)
+
+# adjusted by age group, bootstrapped CIs
+my_adj_stats <- direct_adjusted_estimates(
+  stats_dt = my_stats,
+  stat_col_nms = "e",
+  var_col_nms = "v",
+  conf_lvls = 0.95,
+  conf_methods = "boot",
   stratum_col_nms = "sex",
   adjust_col_nms = "ag",
   weights = c(200, 300, 400, 100)

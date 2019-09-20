@@ -32,9 +32,13 @@
 #'
 #' method to compute confidence intervals; either one string (to be used for
 #' all statistics) or a vector of strings, one for each element of
-#' `stat_col_nms`; use `"none"` for statistics for which you do not want
-#' confidence intervals to be calculated (or `NA` in `var_col_nms`);
-#' see \code{\link{delta_method_confidence_intervals}} for supported methods
+#' `stat_col_nms`; see \code{\link{delta_method_confidence_intervals}} for
+#' supported delta method confidence intervals; other allowed values:
+#'
+#' - `"none"`: for statistics for which you do not want
+#'    confidence intervals to be calculated (or `NA` in `var_col_nms`)
+#' - `"boot"`: bootstrapped confidence intervals --- see args `boot_arg_list`,
+#'   `boot_ci_arg_list` and section **Bootstrap**
 #' @param stratum_col_nms `[NULL, character]` (optional, default `NULL`)
 #'
 #' names of columns in `stats_dt` by which statistics are stratified (and they
@@ -44,7 +48,14 @@
 #' names of columns in `stats_dt` by which statistics are currently stratified
 #' and by which the statistics should be adjusted (e.g. `"agegroup"`)
 #' @template weights_arg
+#' @param boot_arg_list `[list]` (mandatory, default `list(R = 1000)`)
 #'
+#' arguments passed to \code{\link[boot]{boot}} with `data`, `statistic`, and
+#' `stype` overridden internally
+#' @param boot_ci_arg_list `[list]` (mandatory, default `list(type = "perc")`)
+#'
+#' arguments passed to \code{\link[boot]{boot.ci}} with `boot.out` and `conf`
+#' overridden internally (latter comes from `conf_levels`)
 #' @section Weights:
 #'
 #' The weights are scaled internally to sum to one, but they need to be positive
@@ -68,6 +79,14 @@
 #'
 #' This ensures that adjusting will be performed properly, i.e. the weights
 #' are merged and used as intended.
+#'
+#' @section Bootstrap:
+#'
+#' Confidence intervals can be approximated using bootstrap.
+#' \code{\link[boot]{boot.ci}} is called with `stype = "w"`, i.e. the
+#' bootstrap is based on random sampling of weights within each stratum
+#' defined by `stratum_col_nms` for each stratification defined by
+#' `adjust_col_nms`. You have to know whether this is appropriate or not.
 #'
 #' @examples
 #'
@@ -266,33 +285,13 @@ direct_adjusted_estimates <- function(
                                           stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
 
-  tmp_col_nms <- tmp_nms(
-    prefixes = c("tmp_w_", "tmp_w_sum_", "tmp_w_squared_"),
-    avoid = union(names(stats_dt), names(weights_dt)),
+  add_weights_column(
+    stats_dt = stats_dt,
+    stratum_col_nms = stratum_col_nms,
+    weights_dt = weights_dt,
+    adjust_col_nms = adjust_col_nms
   )
-  tmp_w_col_nm <- tmp_col_nms[1]
-  tmp_w_sum_col_nm <- tmp_col_nms[2]
-  tmp_w_squared_col_nm <- tmp_col_nms[3]
-  data.table::set(
-    stats_dt,
-    j = tmp_w_col_nm,
-    value = weights_dt[
-      i = stats_dt,
-      on = eval(adjust_col_nms),
-      j = .SD,
-      .SDcols = "weight"
-      ]
-  )
-  stats_dt[
-    j = (tmp_w_sum_col_nm) := lapply(.SD, sum),
-    .SDcols = tmp_w_col_nm,
-    by = eval(stratum_col_nms)
-  ]
-  data.table::set(
-    stats_dt,
-    j = tmp_w_col_nm,
-    value = stats_dt[[tmp_w_col_nm]] / stats_dt[[tmp_w_sum_col_nm]]
-  )
+  tmp_w_col_nm <- attr(stats_dt, "tmp_w_col_nm")
 
   # bootstrapped confidence intervals ------------------------------------------
   wh_boot_ci <- which(conf_methods == "boot")
@@ -328,11 +327,6 @@ direct_adjusted_estimates <- function(
 
     data.table::set(
       nonboot_stats_dt,
-      j = tmp_w_squared_col_nm,
-      value = nonboot_stats_dt[[tmp_w_col_nm]] ^ 2
-    )
-    data.table::set(
-      nonboot_stats_dt,
       j = stat_col_nms,
       value = lapply(stat_col_nms, function(col_nm) {
         nonboot_stats_dt[[col_nm]] * nonboot_stats_dt[[tmp_w_col_nm]]
@@ -344,7 +338,7 @@ direct_adjusted_estimates <- function(
         nonboot_stats_dt,
         j = usable_var_col_nms,
         value = lapply(usable_var_col_nms, function(col_nm) {
-          nonboot_stats_dt[[col_nm]] * nonboot_stats_dt[[tmp_w_squared_col_nm]]
+          nonboot_stats_dt[[col_nm]] * (nonboot_stats_dt[[tmp_w_col_nm]] ^ 2)
         })
       )
     }
@@ -555,6 +549,8 @@ bootstrap_confidence_intervals <- function(
   boot_arg_list = list(R = 1000),
   boot_ci_arg_list = list(type = "perc")
 ) {
+  this_call <- match.call()
+
   assert_is_data_table_with_required_names(
     stats_dt,
     required_names = c(stat_col_nms, stratum_col_nms, adjust_weight_col_nm)
@@ -576,25 +572,53 @@ bootstrap_confidence_intervals <- function(
     boot_arg_list[["stype"]] <- "w"
     boot_ci_arg_list[["conf"]] <- conf_lvls[i]
     stat_ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
-    ci_dt <- stats_dt[
-      j = {
-        .__DT <- .SD
-        boot_arg_list[["data"]] <- quote(.__DT)
-        b <- do.call(boot::boot, boot_arg_list)
-        boot_ci_arg_list[["boot.out"]] <- quote(b)
-        ci <- do.call(boot::boot.ci, boot_ci_arg_list)
-        ci_list <- as.list(ci[["percent"]][4:5])
-        names(ci_list) <- stat_ci_col_nms
-        ci_list
-      },
+    stratum_value_counts <- stats_dt[
+      j = .(n = data.table::uniqueN(.SD)),
+      .SDcols = stat_col_nm,
       keyby = eval(stratum_col_nms)
+      ]
+    if (any(stratum_value_counts[["n"]] == 1)) {
+      warning(simpleWarning(
+        paste0(
+          "some strata had only one unique value of statistic ",
+          deparse(stat_col_nm), " so bootstrapping was not possible; ",
+          "returning NA confidence intervals in such cases"
+        ),
+        call = this_call
+      ))
+    }
+    strata_with_variance <- stats_dt[
+      i = stratum_value_counts[n > 1, ],
+      on = eval(stratum_col_nms),
     ]
+    if (nrow(strata_with_variance) > 0) {
+      ci_dt <- strata_with_variance[
+        j = {
+          .__DT <- .SD
+          boot_arg_list[["data"]] <- quote(.__DT)
+          b <- do.call(boot::boot, boot_arg_list)
+          est <- b[["t0"]]
+          boot_ci_arg_list[["boot.out"]] <- quote(b)
+          ci <- do.call(boot::boot.ci, boot_ci_arg_list)
+          ci_list <- as.list(ci[["percent"]][4:5])
+          names(ci_list) <- stat_ci_col_nms
+          out <- c(list(est = est), ci_list)
+          names(out)[1] <- stat_col_nm
+          out
+        },
+        keyby = eval(stratum_col_nms)
+        ]
+    }
+
     data.table::set(
       x = out,
-      j = stat_ci_col_nms,
-      value = lapply(stat_ci_col_nms, function(col_nm) {
-        ci_dt[[col_nm]]
-      })
+      j = c(stat_col_nm, stat_ci_col_nms),
+      value = ci_dt[
+        i = out,
+        on = eval(stratum_col_nms),
+        j = .SD,
+        .SDcols = c(stat_col_nm, stat_ci_col_nms)
+      ]
     )
     NULL
   })
