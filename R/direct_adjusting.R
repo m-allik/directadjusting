@@ -205,14 +205,17 @@ direct_adjusted_estimates <- function(
     stats_dt[[col_nm]]
   }))
   data.table::setnames(stats_dt, keep_col_nms)
+  tmp_stratum_col_nm <- tmp_nms(
+    prefixes = "tmp_stratum_col_", avoid = names(stats_dt)
+  )
   if (length(stratum_col_nms) == 0L) {
-    stratum_col_nms <- ".____TMP_STRATUM_DUMMY"
-    on.exit(stats_dt[, ".____TMP_STRATUM_DUMMY" := NULL])
-    stats_dt[, ".____TMP_STRATUM_DUMMY" := NA]
+    stratum_col_nms <- tmp_stratum_col_nm
+    on.exit(stats_dt[, (tmp_stratum_col_nm) := NULL])
+    stats_dt[, (tmp_stratum_col_nm) := NA]
   }
   test_col_nms <- setdiff(
     union(stratum_col_nms, adjust_col_nms),
-    ".____TMP_STRATUM_DUMMY"
+    tmp_stratum_col_nm
   )
   if (length(test_col_nms) > 1) {
     stratum_col_nm_pairs <- utils::combn(test_col_nms, m = 2L)
@@ -247,32 +250,58 @@ direct_adjusted_estimates <- function(
                                           stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
 
-  .__TMP_W <- i.weight <- NULL # to appease our lord and saviour, R CMD CHECK
+  tmp_col_nms <- tmp_nms(
+    prefixes = c("tmp_w_", "tmp_w_sum_", "tmp_w_squared_"),
+    avoid = union(names(stats_dt), names(weights_dt)),
+  )
+  tmp_w_col_nm <- tmp_col_nms[1]
+  tmp_w_sum_col_nm <- tmp_col_nms[2]
+  tmp_w_squared_col_nm <- tmp_col_nms[3]
+  data.table::set(
+    stats_dt,
+    j = tmp_w_col_nm,
+    value = weights_dt[
+      i = stats_dt,
+      on = eval(adjust_col_nms),
+      j = .SD,
+      .SDcols = "weight"
+      ]
+  )
   stats_dt[
-    i = weights_dt,
-    on = eval(adjust_col_nms),
-    j = ".__TMP_W" := i.weight
-  ]
-  stats_dt[
-    j = ".__TMP_W" := .__TMP_W / sum(.__TMP_W),
+    j = (tmp_w_sum_col_nm) := lapply(.SD, sum),
+    .SDcols = tmp_w_col_nm,
     by = eval(stratum_col_nms)
   ]
-  stats_dt[
-    j = (stat_col_nms) := lapply(.SD, function(col) {
-      col * .__TMP_W
-    }),
-    .SDcols = stat_col_nms
-    ]
-  stats_dt[
-    j = (setdiff(var_col_nms, NA)) := lapply(.SD, function(col) {
-      col * (.__TMP_W ^ 2)
-    }),
-    .SDcols = setdiff(var_col_nms, NA)
-    ]
-  value_col_nms <- c(stat_col_nms, setdiff(var_col_nms, NA))
+  data.table::set(
+    stats_dt,
+    j = tmp_w_col_nm,
+    value = stats_dt[[tmp_w_col_nm]] / stats_dt[[tmp_w_sum_col_nm]]
+  )
+  data.table::set(
+    stats_dt,
+    j = tmp_w_squared_col_nm,
+    value = stats_dt[[tmp_w_col_nm]] ^ 2
+  )
+  data.table::set(
+    stats_dt,
+    j = stat_col_nms,
+    value = lapply(stat_col_nms, function(col_nm) {
+      stats_dt[[col_nm]] * stats_dt[[tmp_w_col_nm]]
+    })
+  )
+  usable_var_col_nms <- setdiff(var_col_nms, NA)
+  if (length(usable_var_col_nms) > 0) {
+    data.table::set(
+      stats_dt,
+      j = usable_var_col_nms,
+      value = lapply(usable_var_col_nms, function(col_nm) {
+        stats_dt[[col_nm]] * stats_dt[[tmp_w_squared_col_nm]]
+      })
+    )
+  }
   stats_dt <- stats_dt[
     j = lapply(.SD, sum),
-    .SDcols = value_col_nms,
+    .SDcols = c(stat_col_nms, usable_var_col_nms),
     keyby = eval(stratum_col_nms)
   ]
 
@@ -317,7 +346,7 @@ direct_adjusted_estimates <- function(
   }))
   data.table::setcolorder(stats_dt, c(stratum_col_nms, ordered_stat_col_nms))
   data.table::setkeyv(stats_dt, stratum_col_nms)
-  adjust_col_nms <- setdiff(adjust_col_nms, ".____TMP_STRATUM_DUMMY")
+  adjust_col_nms <- setdiff(adjust_col_nms, tmp_stratum_col_nm)
   if (length(adjust_col_nms) == 0) {
     adjust_col_nms <- NULL
   }

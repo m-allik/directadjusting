@@ -172,7 +172,7 @@ if (requireNamespace("survival", quietly = TRUE)) {
   )
   print(surv_dt_adj, nrows = 10)
   matplot(
-    y = surv_dt_adj[, .(surv, surv_lo, surv_hi)], 
+    y = surv_dt_adj[, .(surv, surv_lo, surv_hi)],
     x = surv_dt_adj[["time"]], type = "s", col = 1, lty = 1,
     xlab = "time", ylab = "survival",
     main = "Survival with 95 \% CIs"
