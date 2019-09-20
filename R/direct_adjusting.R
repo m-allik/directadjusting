@@ -139,7 +139,7 @@
 #'   )
 #'   print(surv_dt_adj, nrows = 10)
 #'   matplot(
-#'     y = surv_dt_adj[, .(surv, surv_lo, surv_hi)], 
+#'     y = surv_dt_adj[, .(surv, surv_lo, surv_hi)],
 #'     x = surv_dt_adj[["time"]], type = "s", col = 1, lty = 1,
 #'     xlab = "time", ylab = "survival",
 #'     main = "Survival with 95 % CIs"
@@ -197,7 +197,7 @@ direct_adjusted_estimates <- function(
   ), list(ALLOWED = allowed_conf_methods())))
 
   # check that stratification makes sense --------------------------------------
-  
+
   keep_col_nms <- setdiff(
     c(stratum_col_nms, adjust_col_nms, stat_col_nms, var_col_nms), NA_character_
   )
@@ -219,14 +219,14 @@ direct_adjusted_estimates <- function(
     lapply(1:ncol(stratum_col_nm_pairs), function(pair_no) {
       pair <- stratum_col_nm_pairs[, pair_no]
       udt <- unique(stats_dt, by = pair)
-      
+
       un1 <- data.table::uniqueN(udt[[pair[1]]])
       un2 <- data.table::uniqueN(udt[[pair[2]]])
       is_cj <- nrow(udt) == un1 * un2
       if (is_cj) {
         return(NULL)
       }
-      
+
       is_hierachical <- nrow(udt) %in% c(un1, un2)
       if (!is_hierachical) {
         stop(simpleError(
@@ -257,13 +257,19 @@ direct_adjusted_estimates <- function(
     j = ".__TMP_W" := .__TMP_W / sum(.__TMP_W),
     by = eval(stratum_col_nms)
   ]
-  value_col_nms <- c(stat_col_nms, setdiff(var_col_nms, NA))
-  stats_dt <- stats_dt[
-    j = (value_col_nms) := lapply(.SD, function(col) {
+  stats_dt[
+    j = (stat_col_nms) := lapply(.SD, function(col) {
       col * .__TMP_W
     }),
-    .SDcols = value_col_nms
+    .SDcols = stat_col_nms
     ]
+  stats_dt[
+    j = (setdiff(var_col_nms, NA)) := lapply(.SD, function(col) {
+      col * (.__TMP_W ^ 2)
+    }),
+    .SDcols = setdiff(var_col_nms, NA)
+    ]
+  value_col_nms <- c(stat_col_nms, setdiff(var_col_nms, NA))
   stats_dt <- stats_dt[
     j = lapply(.SD, sum),
     .SDcols = value_col_nms,
@@ -289,8 +295,8 @@ direct_adjusted_estimates <- function(
 
     ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
     data.table::set(
-      stats_dt, 
-      j = ci_col_nms, 
+      stats_dt,
+      j = ci_col_nms,
       value = lapply(c("ci_lo", "ci_hi"), function(col_nm) {
         ci_dt[[col_nm]]
       })
@@ -350,16 +356,16 @@ confidence_interval_expression <- function(conf_method) {
 #' Computes different kinds of confidence intervals given the statistics
 #' and their variance estimates.
 #' @param statistics `[numeric]` (mandatory, no default)
-#' 
+#'
 #' statistics for which to calculate confidence intervals
 #' @param variances `[numeric]` (mandatory, no default)
-#' 
+#'
 #' variance estimates of `statistics` used to compute confidence intervals
 #' @param conf_lvl `[numeric]` (mandatory, default `0.95`)
-#' 
+#'
 #' confidence level of confidence intervals in `]0, 1[`
 #' @param conf_method `[character]` (mandatory, default `"identity"`)
-#' 
+#'
 #' see section **Confidence interval methods**
 #' @eval {
 #' conf_methods <- setdiff(allowed_conf_methods(), "none")
@@ -382,7 +388,7 @@ confidence_interval_expression <- function(conf_method) {
 #'   "}"
 #' )
 #' }
-#' @return 
+#' @return
 #' `data.table` with columns
 #' - `statistic`: the values you supplied via argument `statistics`
 #' - `variance`: the values you supplied via argument `variances`
