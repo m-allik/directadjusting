@@ -6,7 +6,7 @@
 \usage{
 direct_adjusted_estimates(stats_dt, stat_col_nms, var_col_nms,
   stratum_col_nms = NULL, adjust_col_nms, conf_lvls, conf_methods,
-  weights)
+  weights, boot_arg_list = NULL, boot_ci_arg_list = NULL)
 }
 \arguments{
 \item{stats_dt}{\code{[data.table]} (mandatory, no default)
@@ -52,7 +52,7 @@ method to compute confidence intervals; either one string (to be used for
 all statistics) or a vector of strings, one for each element of
 \code{stat_col_nms}; use \code{"none"} for statistics for which you do not want
 confidence intervals to be calculated (or \code{NA} in \code{var_col_nms});
-see \code{\link{confidence_intervals}} for supported methods}
+see \code{\link{delta_method_confidence_intervals}} for supported methods}
 
 \item{weights}{\code{[double, data.table, character]}
 

@@ -236,6 +236,13 @@ assert_is_NULL <- function(
   }
 }
 
+assert_is_list <- function(x, x_nm = NULL) {
+  if (is.null(x_nm)) {
+    x_nm <- deparse(substitute(x))
+  }
+  assert_has_class(x = x, x_nm = x_nm, required_class = "list")
+}
+
 assert_is_data_table <- function(
   x,
   x_nm = NULL
@@ -380,8 +387,8 @@ generate_assertions <- function() {
   fun_nm_dt <- do.call(data.table::CJ, levels)
   data.table::setkeyv(fun_nm_dt, names(fun_nm_dt))
   fun_nm_dt <- fun_nm_dt[
-    !(fun_nm_dt[["V1"]] %in% c("character", "logical", "Date") & 
-        fun_nm_dt[["V5"]] != ""), 
+    !(fun_nm_dt[["V1"]] %in% c("character", "logical", "Date") &
+        fun_nm_dt[["V5"]] != ""),
     ]
   fun_nms <- do.call(paste0, fun_nm_dt)
   fun_nms <- paste0("assert_is_", fun_nms)

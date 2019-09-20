@@ -34,7 +34,7 @@
 #' all statistics) or a vector of strings, one for each element of
 #' `stat_col_nms`; use `"none"` for statistics for which you do not want
 #' confidence intervals to be calculated (or `NA` in `var_col_nms`);
-#' see \code{\link{confidence_intervals}} for supported methods
+#' see \code{\link{delta_method_confidence_intervals}} for supported methods
 #' @param stratum_col_nms `[NULL, character]` (optional, default `NULL`)
 #'
 #' names of columns in `stats_dt` by which statistics are stratified (and they
@@ -102,6 +102,18 @@
 #'   weights = c(200, 300, 400, 100)
 #' )
 #'
+#' # adjusted by age group, bootstrapped CIs
+#' my_adj_stats <- direct_adjusted_estimates(
+#'   stats_dt = my_stats,
+#'   stat_col_nms = "e",
+#'   var_col_nms = "v",
+#'   conf_lvls = 0.95,
+#'   conf_methods = "boot",
+#'   stratum_col_nms = "sex",
+#'   adjust_col_nms = "ag",
+#'   weights = c(200, 300, 400, 100)
+#' )
+#'
 #' # adjusted by smaller age groups, stratified by larger age groups
 #' my_stats[, "ag2" := c(1,1, 2,2, 1,1, 2,2)]
 #' my_adj_stats <- direct_adjusted_estimates(
@@ -158,7 +170,9 @@ direct_adjusted_estimates <- function(
   adjust_col_nms,
   conf_lvls,
   conf_methods,
-  weights
+  weights,
+  boot_arg_list = list(R = 1000),
+  boot_ci_arg_list = list(type = "perc")
 ) {
 
   call <- match.call()
@@ -195,9 +209,10 @@ direct_adjusted_estimates <- function(
   eval(substitute(stopifnot(
     conf_methods %in% ALLOWED
   ), list(ALLOWED = allowed_conf_methods())))
+  assert_is_list(boot_arg_list)
+  assert_is_list(boot_ci_arg_list)
 
   # check that stratification makes sense --------------------------------------
-
   keep_col_nms <- setdiff(
     c(stratum_col_nms, adjust_col_nms, stat_col_nms, var_col_nms), NA_character_
   )
@@ -245,7 +260,8 @@ direct_adjusted_estimates <- function(
     })
   }
 
-  # compute weighted averages --------------------------------------------------
+
+  # prepare data for adjusted estimates and CIs --------------------------------
   weights_dt <- weights_arg_to_weights_dt(weights = weights,
                                           stats_dt = stats_dt,
                                           adjust_col_nms = adjust_col_nms)
@@ -277,64 +293,107 @@ direct_adjusted_estimates <- function(
     j = tmp_w_col_nm,
     value = stats_dt[[tmp_w_col_nm]] / stats_dt[[tmp_w_sum_col_nm]]
   )
-  data.table::set(
-    stats_dt,
-    j = tmp_w_squared_col_nm,
-    value = stats_dt[[tmp_w_col_nm]] ^ 2
-  )
-  data.table::set(
-    stats_dt,
-    j = stat_col_nms,
-    value = lapply(stat_col_nms, function(col_nm) {
-      stats_dt[[col_nm]] * stats_dt[[tmp_w_col_nm]]
-    })
-  )
-  usable_var_col_nms <- setdiff(var_col_nms, NA)
-  if (length(usable_var_col_nms) > 0) {
-    data.table::set(
-      stats_dt,
-      j = usable_var_col_nms,
-      value = lapply(usable_var_col_nms, function(col_nm) {
-        stats_dt[[col_nm]] * stats_dt[[tmp_w_squared_col_nm]]
-      })
+
+  # bootstrapped confidence intervals ------------------------------------------
+  wh_boot_ci <- which(conf_methods == "boot")
+  wh_nonboot_ci <- setdiff(seq_along(conf_methods), wh_boot_ci)
+  boot_stat_col_nms <- character(0)
+  if (length(wh_boot_ci)) {
+    boot_stat_col_nms <- stat_col_nms[wh_boot_ci]
+    boot_stats_dt <- stats_dt[
+      j = .SD,
+      .SDcols = c(stratum_col_nms, boot_stat_col_nms, tmp_w_col_nm)
+      ]
+    boot_stats_dt <- bootstrap_confidence_intervals(
+      stats_dt = boot_stats_dt,
+      stat_col_nms = boot_stat_col_nms,
+      stratum_col_nms = stratum_col_nms,
+      conf_lvls = conf_lvls,
+      adjust_weight_col_nm = tmp_w_col_nm,
+      boot_arg_list = boot_arg_list,
+      boot_ci_arg_list = boot_ci_arg_list
     )
   }
-  stats_dt <- stats_dt[
-    j = lapply(.SD, sum),
-    .SDcols = c(stat_col_nms, usable_var_col_nms),
-    keyby = eval(stratum_col_nms)
-  ]
 
-  # confidence intervals -------------------------------------------------------
-  lapply(1:length(stat_col_nms), function(i) {
-
-    stat_col_nm <- stat_col_nms[i]
-    var_col_nm <- var_col_nms[i]
-    conf_lvl <- conf_lvls[i]
-    conf_method <- conf_methods[i]
-    if (is.na(var_col_nm) || conf_method == "none") {
-      return(NULL)
+  # delta method confidence intervals ------------------------------------------
+  nonboot_stats_dt <- stats_dt
+  if (length(wh_nonboot_ci) > 0) {
+    if (length(wh_boot_ci) > 0) {
+      data.table::set(nonboot_stats_dt, j = boot_stat_col_nms, value = NULL)
     }
-    ci_dt <- confidence_intervals(
-      statistics = stats_dt[[stat_col_nm]],
-      variances = stats_dt[[var_col_nm]],
-      conf_lvl = conf_lvl,
-      conf_method = conf_method
-    )
 
-    ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
+    nonboot_stat_col_nms <- stat_col_nms[wh_nonboot_ci]
+    nonboot_var_col_nms <- var_col_nms[wh_nonboot_ci]
+    usable_nonboot_var_col_nms <- setdiff(nonboot_var_col_nms, NA_character_)
+
     data.table::set(
-      stats_dt,
-      j = ci_col_nms,
-      value = lapply(c("ci_lo", "ci_hi"), function(col_nm) {
-        ci_dt[[col_nm]]
+      nonboot_stats_dt,
+      j = tmp_w_squared_col_nm,
+      value = nonboot_stats_dt[[tmp_w_col_nm]] ^ 2
+    )
+    data.table::set(
+      nonboot_stats_dt,
+      j = stat_col_nms,
+      value = lapply(stat_col_nms, function(col_nm) {
+        nonboot_stats_dt[[col_nm]] * nonboot_stats_dt[[tmp_w_col_nm]]
       })
     )
-    data.table::alloc.col(stats_dt)
-    NULL
-  })
+    usable_var_col_nms <- setdiff(var_col_nms, NA)
+    if (length(usable_var_col_nms) > 0) {
+      data.table::set(
+        nonboot_stats_dt,
+        j = usable_var_col_nms,
+        value = lapply(usable_var_col_nms, function(col_nm) {
+          nonboot_stats_dt[[col_nm]] * nonboot_stats_dt[[tmp_w_squared_col_nm]]
+        })
+      )
+    }
+    nonboot_stats_dt <- nonboot_stats_dt[
+      j = lapply(.SD, sum),
+      .SDcols = c(nonboot_stat_col_nms, usable_var_col_nms),
+      keyby = eval(stratum_col_nms)
+      ]
+
+    lapply(wh_nonboot_ci, function(i) {
+      stat_col_nm <- stat_col_nms[i]
+      var_col_nm <- var_col_nms[i]
+      conf_lvl <- conf_lvls[i]
+      conf_method <- conf_methods[i]
+      if (is.na(var_col_nm) || conf_method == "none") {
+        return(NULL)
+      }
+      ci_dt <- delta_method_confidence_intervals(
+        statistics = nonboot_stats_dt[[stat_col_nm]],
+        variances = nonboot_stats_dt[[var_col_nm]],
+        conf_lvl = conf_lvl,
+        conf_method = conf_method
+      )
+
+      ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
+      data.table::set(
+        nonboot_stats_dt,
+        j = ci_col_nms,
+        value = lapply(c("ci_lo", "ci_hi"), function(col_nm) {
+          ci_dt[[col_nm]]
+        })
+      )
+      data.table::alloc.col(nonboot_stats_dt)
+      NULL
+    })
+  }
+
 
   # final touches --------------------------------------------------------------
+  stats_dt <- nonboot_stats_dt[, .SD, .SDcols = stratum_col_nms]
+  stats_dt <- unique(stats_dt, by = stratum_col_nms)
+  data.table::setkeyv(stats_dt, stratum_col_nms)
+  if (length(wh_nonboot_ci)) {
+    stats_dt <- stats_dt[nonboot_stats_dt, on = eval(stratum_col_nms)]
+  }
+  if (length(wh_boot_ci)) {
+    stats_dt <- stats_dt[boot_stats_dt, on = eval(stratum_col_nms)]
+  }
+
   ordered_stat_col_nms <- unlist(lapply(1:length(stat_col_nms), function(i) {
     stat_col_nm <- stat_col_nms
     var_col_nm <- var_col_nms
@@ -344,7 +403,12 @@ direct_adjusted_estimates <- function(
                               names(stats_dt))
     stat_col_nms
   }))
-  data.table::setcolorder(stats_dt, c(stratum_col_nms, ordered_stat_col_nms))
+  keep_col_nms <- c(stratum_col_nms, ordered_stat_col_nms)
+  del_col_nms <- setdiff(names(stats_dt), keep_col_nms)
+  if (length(del_col_nms)) {
+    data.table::set(stats_dt, j = del_col_nms, value = NULL)
+  }
+  data.table::setcolorder(stats_dt, keep_col_nms)
   data.table::setkeyv(stats_dt, stratum_col_nms)
   adjust_col_nms <- setdiff(adjust_col_nms, tmp_stratum_col_nm)
   if (length(adjust_col_nms) == 0) {
@@ -363,8 +427,11 @@ direct_adjusted_estimates <- function(
 
 
 
+delta_method_conf_methods <- function() {
+  c("identity", "log", "log-log")
+}
 allowed_conf_methods <- function() {
-  c("none", "identity", "log", "log-log")
+  c("none", delta_method_conf_methods(), "boot")
 }
 confidence_interval_expression <- function(conf_method) {
   assert_is_character_nonNA_atom(conf_method)
@@ -397,7 +464,7 @@ confidence_interval_expression <- function(conf_method) {
 #'
 #' see section **Confidence interval methods**
 #' @eval {
-#' conf_methods <- setdiff(allowed_conf_methods(), "none")
+#' conf_methods <- setdiff(allowed_conf_methods(), c("none", "boot"))
 #' maths <- vapply(conf_methods, function(conf_method) {
 #'   paste0(deparse(confidence_interval_expression(conf_method)), collapse = "")
 #' }, character(1))
@@ -426,7 +493,8 @@ confidence_interval_expression <- function(conf_method) {
 #' @export
 #' @importFrom data.table := setattr setnames set
 #' @importFrom stats qnorm
-confidence_intervals <- function(
+#' @importFrom boot boot boot.ci
+delta_method_confidence_intervals <- function(
   statistics,
   variances,
   conf_lvl = 0.95,
@@ -453,8 +521,14 @@ confidence_intervals <- function(
   expr <- substitute(dt[, "ci_hi" := MATH], list(MATH = math))
   eval(expr)
 
+  meta_list <- mget(c("conf_lvl", "conf_method", "math"))
+  if (conf_method == "boot") {
+    meta_list <- c(meta_list, mget(c("boot_arg_list", "boot_ci_arg_list")))
+  }
   data.table::setattr(
-    dt, name = "ci_meta", value = mget(c("conf_lvl", "conf_method", "math"))
+    dt,
+    name = "ci_meta",
+    value = meta_list
   )
   data.table::setnames(dt, c("STAT", "STD_ERR"), c("statistic", "variance"))
   data.table::set(
@@ -465,6 +539,74 @@ confidence_intervals <- function(
   data.table::setcolorder(dt, c("statistic", "variance", "ci_lo", "ci_hi"))
   dt[]
 }
+
+
+
+
+
+#' @importFrom data.table setkeyv .SD := set
+#' @importFrom boot boot boot.ci
+bootstrap_confidence_intervals <- function(
+  stats_dt,
+  stat_col_nms,
+  stratum_col_nms,
+  conf_lvls,
+  adjust_weight_col_nm = "weight",
+  boot_arg_list = list(R = 1000),
+  boot_ci_arg_list = list(type = "perc")
+) {
+  assert_is_data_table_with_required_names(
+    stats_dt,
+    required_names = c(stat_col_nms, stratum_col_nms, adjust_weight_col_nm)
+  )
+  assert_is_list(boot_arg_list)
+  assert_is_list(boot_ci_arg_list)
+
+  out <- stats_dt[, .SD, .SDcols = stratum_col_nms]
+  out <- unique(out, by = stratum_col_nms)
+  data.table::setkeyv(out, stratum_col_nms)
+  ci_list <- lapply(seq_along(stat_col_nms), function(i) {
+    stat_col_nm <- stat_col_nms[i]
+    boot_stat_fun <- function(d, w) {
+      w <- w * d[[adjust_weight_col_nm]]
+      w <- w / sum(w)
+      sum(d[[stat_col_nm]] * w)
+    }
+    boot_arg_list[["statistic"]] <- boot_stat_fun
+    boot_arg_list[["stype"]] <- "w"
+    boot_ci_arg_list[["conf"]] <- conf_lvls[i]
+    stat_ci_col_nms <- paste0(stat_col_nm, c("_lo", "_hi"))
+    ci_dt <- stats_dt[
+      j = {
+        .__DT <- .SD
+        boot_arg_list[["data"]] <- quote(.__DT)
+        b <- do.call(boot::boot, boot_arg_list)
+        boot_ci_arg_list[["boot.out"]] <- quote(b)
+        ci <- do.call(boot::boot.ci, boot_ci_arg_list)
+        ci_list <- as.list(ci[["percent"]][4:5])
+        names(ci_list) <- stat_ci_col_nms
+        ci_list
+      },
+      keyby = eval(stratum_col_nms)
+    ]
+    data.table::set(
+      x = out,
+      j = stat_ci_col_nms,
+      value = lapply(stat_ci_col_nms, function(col_nm) {
+        ci_dt[[col_nm]]
+      })
+    )
+    NULL
+  })
+  out[]
+}
+
+
+
+
+
+
+
 
 
 
