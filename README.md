@@ -3,7 +3,7 @@
 # directadjusting
 
 
-This is a and altered version of WetRobot/directadjusting. It is a start of a wrapper function to:
+This is an altered version of WetRobot/directadjusting. It is a start of a wrapper function to:
 
 1. deal with age groups such as 15-16 and 17-19 provided in the data - that would have to be a labelled factor variable to work! e.g. with labels such as "15-16" to clearly spell out the age.
 2. give user the option to ooutput direct asjusted rates for a specific age group such as 10-16 and 17-24 etc.
